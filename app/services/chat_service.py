@@ -207,15 +207,15 @@ class ChatService:
                                 if blocks:
                                     msg_parts.append("\n**Xếp hạng theo khối và khu vực:**")
                                     for block in blocks:
-                                        label = getattr(block, "label", block.get("label", ""))
-                                        point = getattr(block, "point", block.get("point", ""))
-                                        region = getattr(block, "region", block.get("region", ""))
-                                        year = getattr(block, "year", block.get("year", 2025))
-                                        ranking = getattr(block, "ranking", block.get("ranking", None))
+                                        label = getattr(block, "label", "")
+                                        point = getattr(block, "point", "")
+                                        region = getattr(block, "region", "")
+                                        year = getattr(block, "year", 2025)
+                                        ranking = getattr(block, "ranking", None)
                                         rank_str = f"- {label} ({region}, {year}): {point} điểm"
                                         if ranking:
-                                            higher = getattr(ranking, "higher", ranking.get("higher", 0))
-                                            total = getattr(ranking, "total", ranking.get("total", 1))
+                                            higher = getattr(ranking, "higher", 0)
+                                            total = getattr(ranking, "total", 1)
                                             rank_str += f" | Xếp hạng: top {round((1-(higher/total))*100,2)}% ({higher}/{total})"
                                         msg_parts.append(rank_str)
                             bot_response = "\n".join(msg_parts) if msg_parts else "Không có dữ liệu điểm hoặc ranking cho SBD này."
