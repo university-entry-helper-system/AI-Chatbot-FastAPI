@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from app.services.university_service import university_service
 
 router = APIRouter(prefix="/university", tags=["university"])
@@ -27,6 +27,28 @@ async def update_universities():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/create")
+async def create_university(uni_data: dict = Body(...)):
+    """
+    Tạo mới một trường đại học/cao đẳng.
+    """
+    try:
+        doc = await university_service.create_university(uni_data)
+        return {"success": True, "data": doc}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/update/{uni_id}")
+async def update_university(uni_id: int, update_data: dict = Body(...)):
+    """
+    Update thông tin một trường theo id.
+    """
+    try:
+        doc = await university_service.update_university(uni_id, update_data)
+        return {"success": True, "data": doc}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/search")
 async def search_universities(code: str = Query(None), name: str = Query(None)):
     """
@@ -36,4 +58,4 @@ async def search_universities(code: str = Query(None), name: str = Query(None)):
         data = await university_service.search_universities(code=code, name=name)
         return {"success": True, "data": data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
