@@ -1,5 +1,6 @@
 from app.core.mongo import mongo_db
 import uuid
+from app.core.config import settings
 
 class ChatRepository:
     def __init__(self):
@@ -22,7 +23,9 @@ class ChatRepository:
         doc["_id"] = str(result.inserted_id)
         return doc
 
-    async def get_chat_history(self, session_id: str, limit: int = 20):
+    async def get_chat_history(self, session_id: str, limit: int = None):
+        if limit is None:
+            limit = settings.chat_history_limit
         cursor = self.message_collection.find({"session_id": session_id}).sort("_id", -1).limit(limit)
         return [doc async for doc in cursor]
 

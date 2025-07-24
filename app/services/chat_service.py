@@ -1,55 +1,38 @@
 from typing import Dict, Any, List
 import uuid
 import re
+import logging
+import json
+from pathlib import Path
+from rapidfuzz import fuzz
 from app.repositories.chat_repository import chat_repository
 from app.repositories.ranking_repository import ranking_repository
 from app.services.openai_service import openai_service
 from app.services.knowledge_service import knowledge_service
+from app.core.config import settings
+
+logger = logging.getLogger("chat_service")
 
 class ChatService:
     def __init__(self):
-        # Expanded keyword categories với nhiều variations
-        self.keyword_categories = {
-            "score_lookup": [
-                "sbd", "số báo danh", "điểm thi", "tra cứu điểm", "xem điểm", 
-                "kiểm tra điểm", "kết quả thi", "ranking", "xếp hạng"
-            ],
-            "school_recommendation": [
-                "tư vấn trường", "chọn trường", "trường nào tốt", "đại học", 
-                "trường phù hợp", "gợi ý trường", "recommend trường"
-            ],
-            "admission_score": [
-                "điểm chuẩn", "điểm đỗ", "cần bao nhiêu điểm", "điểm xét tuyển",
-                "điểm đầu vào", "threshold", "cutoff"
-            ],
-            "location_based": [
-                "trường ở", "tỉnh", "thành phố", "khu vực", "miền bắc", 
-                "miền nam", "miền trung", "hà nội", "sài gòn", "đà nẵng"
-            ],
-            "major_advice": [
-                "ngành", "chuyên ngành", "học gì", "ngành nào hot", 
-                "nghề nghiệp", "career", "job", "major"
-            ],
-            "schedule": [
-                "lịch", "hạn chót", "khi nào", "bao giờ", "thời gian đăng ký",
-                "deadline", "timeline", "calendar"
-            ],
-            "procedure": [
-                "thủ tục", "hồ sơ", "cách đăng ký", "giấy tờ cần thiết",
-                "procedure", "documents", "registration"
-            ],
-            "financial": [
-                "học phí", "chi phí", "học bổng", "vay vốn", "kinh phí",
-                "tuition", "scholarship", "cost", "fee"
-            ]
-        }
+        # Load keyword_categories từ file JSON
+        keyword_path = Path(__file__).parent.parent / "data" / "keyword_categories.json"
+        with open(keyword_path, "r", encoding="utf-8") as f:
+            self.keyword_categories = json.load(f)
 
-    async def create_session(self, user_id: str) -> str:
+    async def create_session(self) -> str:
+        # Nếu cần user_id, có thể sinh ngẫu nhiên hoặc bỏ qua
+        user_id = "anonymous"
         return await chat_repository.create_session(user_id)
     
     def detect_intent(self, message: str) -> str:
         """Phát hiện ý định của người dùng với priority logic"""
         message_lower = message.lower()
+
+        # Priority 0: Detect greeting messages
+        greeting_keywords = ["hi", "hello", "chào", "xin chào", "hey", "helo", "hế lô"]
+        if any(greeting in message_lower for greeting in greeting_keywords) and len(message.split()) <= 5:
+            return "greeting"
         
         # Priority 1: Detect số báo danh (8 chữ số)
         sbd_pattern = r'\b\d{8}\b'
@@ -72,16 +55,17 @@ class ChatService:
         if any(major in message_lower for major in major_names):
             return "major_advice"
         
-        # Priority 4: Check keywords theo category
+        # Priority 4: Check keywords theo category (fuzzy)
         intent_scores = {}
         for category, keywords in self.keyword_categories.items():
-            score = sum(1 for keyword in keywords if keyword in message_lower)
+            score = 0
+            for keyword in keywords:
+                if fuzz.partial_ratio(keyword, message_lower) >= 80:
+                    score += 1
             if score > 0:
                 intent_scores[category] = score
-        
         if intent_scores:
             return max(intent_scores, key=intent_scores.get)
-        
         return "general"
     
     def extract_candidate_number(self, message: str) -> str:
@@ -120,28 +104,49 @@ class ChatService:
                 student_data = await ranking_repository.get_by_candidate_number(candidate_number)
                 return student_data
             except Exception as e:
-                print(f"Error getting student data: {e}")
+                logger.error(f"Error getting student data: {e}")
+                return {"error": "Không tìm thấy thông tin điểm thi cho SBD này"}
         return None
 
     async def process_message(self, session_id: str, user_message: str) -> Dict[str, Any]:
-        """Xử lý tin nhắn với Knowledge Base và OpenAI"""
         try:
             # 1. Phát hiện ý định và entities
-        intent = self.detect_intent(user_message)
+            intent = self.detect_intent(user_message)
             entities = self.extract_entities(user_message)
-            
             # 2. Lấy lịch sử chat
-            chat_history = await chat_repository.get_chat_history(session_id, limit=5)
-            
+            chat_history = await chat_repository.get_chat_history(session_id, limit=settings.chat_history_limit)
             # 3. Lấy thông tin điểm thi nếu có SBD
             student_data = await self.get_student_data_if_available(user_message)
-            
+
+            # 3.1. Trích xuất tên nếu user giới thiệu bản thân
+            import re
+            name = None
+            name_patterns = [
+                r"tôi tên ([A-Za-zÀ-ỹà-ỹ'\- ]{2,50})",
+                r"mình tên ([A-Za-zÀ-ỹà-ỹ'\- ]{2,50})",
+                r"tên tôi là ([A-Za-zÀ-ỹà-ỹ'\- ]{2,50})",
+                r"my name is ([A-Za-zÀ-ỹà-ỹ'\- ]{2,50})",
+            ]
+            blacklist = {"gì", "gì?", "gì.", "ai", "bạn", "mình", "tôi", "tên", "là", "vậy", "không", "?", ".", ""}
+            for pattern in name_patterns:
+                match = re.search(pattern, user_message, re.IGNORECASE)
+                if match:
+                    raw_name = match.group(1).strip()
+                    # Loại bỏ khoảng trắng thừa giữa các từ
+                    cleaned_name = ' '.join(raw_name.split())
+                    # Chuẩn hóa chữ hoa đầu mỗi từ
+                    cleaned_name = cleaned_name.title()
+                    # Kiểm tra blacklist cho từ đầu tiên
+                    if cleaned_name.split()[0].lower() not in blacklist:
+                        name = cleaned_name
+                    break
+
             # 4. Xử lý đặc biệt cho score_lookup
-        if intent == "score_lookup":
+            if intent == "score_lookup":
                 candidate_number = entities.get('candidate_number')
-                
-                if candidate_number and not student_data:
-                    # SBD có nhưng chưa có data trong DB
+                if not candidate_number:
+                    bot_response = "SBD phải là 8 chữ số. Vui lòng kiểm tra lại!"
+                elif candidate_number and not student_data:
                     bot_response = f"""🔍 Tôi thấy bạn muốn tra cứu điểm cho SBD **{candidate_number}**.
 
 📋 **Để tra cứu chính xác:**
@@ -153,63 +158,67 @@ class ChatService:
 - Cung cấp SBD + khu vực để tra cứu
 
 Bạn có muốn tôi hướng dẫn cách tra cứu chi tiết không?"""
-                    
-                elif not candidate_number:
-                    bot_response = """📝 **Để tra cứu điểm thi, bạn cần cung cấp:**
-- Số báo danh (8 chữ số)
-- Khu vực thi (CN/MB/MT/MN)
-
-**Ví dụ:** "Tra cứu điểm SBD 12345678 khu vực CN"
-
-🔗 **Hoặc sử dụng website chính thức:**
-- diemthi.tuyensinh247.com
-- diemthi.vnexpress.net"""
                 else:
-                    # Có data rồi → dùng OpenAI phân tích
                     bot_response = await openai_service.generate_context_aware_response(
                         user_message=user_message,
                         intent=intent,
                         chat_history=chat_history,
                         student_ranking_data=student_data
                     )
-        else:
+            else:
                 # Các intent khác → dùng OpenAI với knowledge base
-                bot_response = await openai_service.generate_context_aware_response(
-                    user_message=user_message,
-                    intent=intent,
-                    chat_history=chat_history,
-                    student_ranking_data=student_data
-                )
-            
+                # Nếu là intent general và có tên, tạo context đặc biệt
+                if intent == "general" and name:
+                    user_context = f"""
+👤 USER SHARING PERSONAL INFO:
+- User is introducing themselves
+- Name: {name}
+- Respond warmly, remember their name, and transition to asking how you can help with admissions
+"""
+                    bot_response = await openai_service.generate_response(
+                        user_message=user_message,
+                        intent=intent,
+                        context=chat_history,
+                        student_data=None
+                    )
+                else:
+                    # intent == general hoặc các intent khác đều để GPT tự ứng biến, chỉ fallback khi OpenAI thực sự lỗi
+                    bot_response = await openai_service.generate_context_aware_response(
+                        user_message=user_message,
+                        intent=intent,
+                        chat_history=chat_history,
+                        student_ranking_data=student_data
+                    )
             # 5. Lưu tin nhắn vào database
             chat_message = await chat_repository.create_message(
                 session_id, user_message, bot_response, intent
-        )
-        
-        return {
+            )
+            return {
                 "message_id": chat_message["_id"],
-            "bot_response": bot_response,
-            "intent": intent,
+                "bot_response": bot_response,
+                "intent": intent,
                 "entities": entities,
                 "session_id": session_id,
                 "has_student_data": student_data is not None,
                 "candidate_number": entities.get('candidate_number'),
                 "context": {
                     "chat_length": len(chat_history) + 1,
-                    "extracted_info": {k: v for k, v in entities.items() if v}
+                    "extracted_info": {k: v for k, v in entities.items() if v},
+                    "user_name": name if name else None
                 }
             }
             
         except Exception as e:
-            print(f"Error in process_message: {e}")
-            
+            logger.error(f"Error in process_message: {e}")
             # Enhanced fallback với knowledge base
-            fallback_response = self._get_enhanced_fallback(intent, user_message)
-            
+            # Nếu là intent general và có user_name, trả về câu chào thân thiện
+            if intent == "general" and 'user_name' in locals() and name:
+                fallback_response = f"Xin chào {name}! Tôi rất vui được trò chuyện với bạn. Hiện tại tôi đang gặp chút vấn đề kỹ thuật, nhưng bạn có thể hỏi tôi về tuyển sinh hoặc thử lại sau nhé!"
+            else:
+                fallback_response = self._get_enhanced_fallback(intent, user_message)
             chat_message = await chat_repository.create_message(
                 session_id, user_message, fallback_response, "error"
             )
-            
             return {
                 "message_id": chat_message["_id"],
                 "bot_response": fallback_response,
@@ -267,13 +276,14 @@ Bạn có muốn tôi hướng dẫn cách tra cứu chi tiết không?"""
 
 🔄 Vui lòng thử lại sau ít phút."""
 
-    async def get_chat_history(self, session_id: str, limit: int = 20):
-        """Lấy lịch sử chat"""
-        return await chat_repository.get_chat_history(session_id, limit)
+    async def get_chat_history(self, session_id: str, limit: int = None):
+        if limit is None:
+            limit = settings.chat_history_limit
+        return await chat_repository.get_chat_history(session_id, limit=limit)
 
     async def get_session_context(self, session_id: str) -> Dict[str, Any]:
         """Lấy context chi tiết của session"""
-        history = await chat_repository.get_chat_history(session_id, limit=10)
+        history = await chat_repository.get_chat_history(session_id, limit=settings.chat_history_limit)
         
         # Phân tích patterns trong session
         intents = [msg.get("intent", "general") for msg in history]
