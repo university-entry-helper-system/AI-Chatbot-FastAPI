@@ -328,4 +328,29 @@ Bạn có thể thử lại hoặc đặt câu hỏi cụ thể hơn.""")
             student_data=student_ranking_data
         )
 
+    async def stream_response(self, user_message: str, context=None, intent: str = "general", student_data=None):
+        """
+        Gọi OpenAI API với stream=True, yield từng chunk assistant trả lời (chỉ content).
+        """
+        import asyncio
+        messages = [{"role": "system", "content": self.system_prompt}]
+        if context:
+            messages.extend(context)
+        messages.append({"role": "user", "content": user_message})
+        # Gọi OpenAI stream
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=800,
+            temperature=0.7,
+            top_p=0.9,
+            frequency_penalty=0.1,
+            presence_penalty=0.1,
+            stream=True
+        )
+        async for chunk in response:
+            delta = getattr(chunk.choices[0].delta, "content", None)
+            if delta:
+                yield delta
+
 openai_service = OpenAIService()

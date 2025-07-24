@@ -1,4 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import StreamingResponse
 from app.services.chat_service import chat_service
 from app.utils.response import success_response
 import json
@@ -11,8 +12,13 @@ async def send_message(message_request: ChatMessageRequest):
     try:
         session_id = message_request.session_id
         user_message = message_request.user_message
-        result = await chat_service.process_message(session_id, user_message)
-        return success_response(data=result, message="Message processed successfully")
+        async def streamer():
+            try:
+                async for chunk in chat_service.process_message_stream(session_id, user_message):
+                    yield chunk
+            except Exception as e:
+                yield f"[ERROR]: {str(e)}"
+        return StreamingResponse(streamer(), media_type="text/plain")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

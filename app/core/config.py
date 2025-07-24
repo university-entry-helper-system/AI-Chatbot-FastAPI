@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     api_prefix: str = os.getenv("API_PREFIX", "/api/v1")
     mongo_url: str = os.getenv("MONGO_URL", "mongodb://localhost:27017")
     mongo_db: str = os.getenv("MONGO_DB", "ai_chatbot")
-    
+
     class Config:
         env_file = ".env"
         extra = "allow"

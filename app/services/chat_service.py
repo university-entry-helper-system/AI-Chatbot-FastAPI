@@ -102,7 +102,7 @@ class ChatService:
                 return {"error": "Không tìm thấy thông tin điểm thi cho SBD này"}
         return None
 
-    async def process_message(self, session_id: str, user_message: str) -> Dict[str, Any]:
+    async def process_message_stream(self, session_id: str, user_message: str):
         try:
             # 1. Phát hiện ý định và entities
             intent = self.detect_intent(user_message)
@@ -219,6 +219,12 @@ class ChatService:
                                             rank_str += f" | Xếp hạng: top {round((1-(higher/total))*100,2)}% ({higher}/{total})"
                                         msg_parts.append(rank_str)
                             bot_response = "\n".join(msg_parts) if msg_parts else "Không có dữ liệu điểm hoặc ranking cho SBD này."
+                # Lưu vào history và yield luôn
+                chat_message = await chat_repository.create_message(
+                    session_id, user_message, bot_response, intent
+                )
+                yield bot_response
+                return
             else:
                 # Các intent khác → dùng OpenAI với knowledge base
                 if intent == "general" and name:
@@ -228,56 +234,44 @@ class ChatService:
 - Name: {name}
 - Respond warmly, remember their name, and transition to asking how you can help with admissions
 """
-                    bot_response = await openai_service.generate_response(
+                    # Stream OpenAI
+                    full_response = ""
+                    async for chunk in openai_service.stream_response(
                         user_message=user_message,
                         intent=intent,
                         context=chat_history,
                         student_data=None
+                    ):
+                        full_response += chunk
+                        yield chunk
+                    # Lưu vào history
+                    await chat_repository.create_message(
+                        session_id, user_message, full_response, intent
                     )
+                    return
                 else:
-                    bot_response = await openai_service.generate_context_aware_response(
+                    # Stream OpenAI cho intent khác
+                    full_response = ""
+                    async for chunk in openai_service.stream_response(
                         user_message=user_message,
                         intent=intent,
-                        chat_history=chat_history,
-                        student_ranking_data=student_data
+                        context=chat_history,
+                        student_data=student_data
+                    ):
+                        full_response += chunk
+                        yield chunk
+                    # Lưu vào history
+                    await chat_repository.create_message(
+                        session_id, user_message, full_response, intent
                     )
-            # 5. Lưu tin nhắn vào database
-            chat_message = await chat_repository.create_message(
-                session_id, user_message, bot_response, intent
-            )
-            return {
-                "message_id": chat_message["_id"],
-                "bot_response": bot_response,
-                "intent": intent,
-                "entities": entities,
-                "session_id": session_id,
-                "has_student_data": student_data is not None,
-                "candidate_number": entities.get('candidate_number'),
-                "context": {
-                    "chat_length": len(chat_history) + 1,
-                    "extracted_info": {k: v for k, v in entities.items() if v},
-                    "user_name": name if name else None
-                }
-            }
-            
+                    return
         except Exception as e:
-            logger.error(f"Error in process_message: {e}")
-            # Enhanced fallback với knowledge base
-            # Nếu là intent general và có user_name, trả về câu chào thân thiện
-            if intent == "general" and 'user_name' in locals() and name:
-                fallback_response = f"Xin chào {name}! Tôi rất vui được trò chuyện với bạn. Hiện tại tôi đang gặp chút vấn đề kỹ thuật, nhưng bạn có thể hỏi tôi về tuyển sinh hoặc thử lại sau nhé!"
-            else:
-                fallback_response = self._get_enhanced_fallback(intent, user_message)
-            chat_message = await chat_repository.create_message(
+            logger.error(f"Error in process_message_stream: {e}")
+            fallback_response = self._get_enhanced_fallback("error", user_message)
+            await chat_repository.create_message(
                 session_id, user_message, fallback_response, "error"
             )
-            return {
-                "message_id": chat_message["_id"],
-                "bot_response": fallback_response,
-                "intent": "error",
-                "session_id": session_id,
-                "error": str(e)[:100]  # Truncate error message
-            }
+            yield fallback_response
 
     def _get_enhanced_fallback(self, intent: str, user_message: str) -> str:
         """Enhanced fallback using knowledge base"""
