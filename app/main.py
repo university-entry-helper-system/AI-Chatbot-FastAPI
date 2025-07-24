@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.controllers import chat_controller, crawl_controller, ranking_controller
+from app.controllers import chat_controller, ranking_controller
 
 app = FastAPI(
     title=settings.app_name,
@@ -22,7 +22,6 @@ API_PREFIX = getattr(settings, "api_prefix", "/api/v1")
 
 # Include routers
 app.include_router(chat_controller.router, prefix=API_PREFIX)
-app.include_router(crawl_controller.router, prefix=API_PREFIX)
 app.include_router(ranking_controller.router, prefix=API_PREFIX)
 
 # Health check endpoint
@@ -34,7 +33,6 @@ async def root():
         "status": "running",
         "endpoints": [
             f"{API_PREFIX}/chat/",
-            f"{API_PREFIX}/crawl/",
             f"{API_PREFIX}/ranking/",
             "/docs"
         ]

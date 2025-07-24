@@ -1,7 +1,7 @@
 import aiohttp
 import time
 from typing import Optional, List, Dict, Any
-from app.schemas.student import RankingSearchRequest, StudentRankingResponse
+from app.schemas.ranking import RankingSearchRequest, StudentRankingResponse
 from app.repositories.ranking_repository import ranking_repository
 
 class RankingService:
@@ -63,9 +63,9 @@ class RankingService:
     ) -> Optional[StudentRankingResponse]:
         # Check if data exists in MongoDB first
         existing_student = await ranking_repository.get_by_candidate_number(request.candidate_number)
-        if existing_student and not save_to_db:
+        if existing_student:
             return StudentRankingResponse(**existing_student)
-        # Call API
+        # Call API ngoài nếu chưa có
         api_result = await self._make_api_request(request.candidate_number, request.region)
         if not api_result["success"]:
             return None

@@ -10,54 +10,46 @@ from app.repositories.ranking_repository import ranking_repository
 from app.services.openai_service import openai_service
 from app.services.knowledge_service import knowledge_service
 from app.core.config import settings
+from app.services.ranking_service import ranking_service
+from app.schemas.ranking import RankingSearchRequest
 
 logger = logging.getLogger("chat_service")
 
 class ChatService:
     def __init__(self):
-        # Load keyword_categories từ file JSON
-        keyword_path = Path(__file__).parent.parent / "data" / "keyword_categories.json"
-        with open(keyword_path, "r", encoding="utf-8") as f:
-            self.keyword_categories = json.load(f)
+        # Load knowledge_base keywords (greeting, school, major, ...)
+        kb_path = Path(__file__).parent.parent / "data" / "knowledge_base.json"
+        with open(kb_path, "r", encoding="utf-8") as f:
+            self.knowledge_base = json.load(f)
+        self.greeting_keywords = self.knowledge_base.get("greeting", {}).get("keywords", [])
+        self.school_keywords = self.knowledge_base.get("school_recommendation", {}).get("keywords", [])
+        self.major_keywords = self.knowledge_base.get("major_advice", {}).get("keywords", [])
+        # Build intent_keywords mapping from all keys in knowledge_base.json that có 'keywords'
+        self.intent_keywords = {k: v["keywords"] for k, v in self.knowledge_base.items() if isinstance(v, dict) and "keywords" in v}
 
     async def create_session(self) -> str:
         # Nếu cần user_id, có thể sinh ngẫu nhiên hoặc bỏ qua
         user_id = "anonymous"
         return await chat_repository.create_session(user_id)
-    
-    def detect_intent(self, message: str) -> str:
-        """Phát hiện ý định của người dùng với priority logic"""
-        message_lower = message.lower()
 
+    def detect_intent(self, message: str) -> str:
+        message_lower = message.lower()
         # Priority 0: Detect greeting messages
-        greeting_keywords = ["hi", "hello", "chào", "xin chào", "hey", "helo", "hế lô"]
-        if any(greeting in message_lower for greeting in greeting_keywords) and len(message.split()) <= 5:
+        if any(greeting in message_lower for greeting in self.greeting_keywords) and len(message.split()) <= 5:
             return "greeting"
-        
         # Priority 1: Detect số báo danh (8 chữ số)
         sbd_pattern = r'\b\d{8}\b'
         if re.search(sbd_pattern, message):
             return "score_lookup"
-        
         # Priority 2: Detect tên trường cụ thể
-        school_names = [
-            "bách khoa", "y hà nội", "kinh tế quốc dân", "ngoại thương",
-            "luật hà nội", "sư phạm", "công nghiệp", "nông nghiệp"
-        ]
-        if any(school in message_lower for school in school_names):
+        if any(school in message_lower for school in self.school_keywords):
             return "school_recommendation"
-        
         # Priority 3: Detect ngành học cụ thể
-        major_names = [
-            "công nghệ thông tin", "y khoa", "cơ khí", "điện tử",
-            "kinh tế", "luật", "sinh học", "hóa học"
-        ]
-        if any(major in message_lower for major in major_names):
+        if any(major in message_lower for major in self.major_keywords):
             return "major_advice"
-        
-        # Priority 4: Check keywords theo category (fuzzy)
+        # Priority 4: Fuzzy match từng intent theo đúng keywords trong knowledge_base.json
         intent_scores = {}
-        for category, keywords in self.keyword_categories.items():
+        for category, keywords in self.intent_keywords.items():
             score = 0
             for keyword in keywords:
                 if fuzz.partial_ratio(keyword, message_lower) >= 80:
@@ -65,7 +57,8 @@ class ChatService:
             if score > 0:
                 intent_scores[category] = score
         if intent_scores:
-            return max(intent_scores, key=intent_scores.get)
+            sorted_intents = sorted(intent_scores.items(), key=lambda x: (-x[1], list(self.intent_keywords.keys()).index(x[0])))
+            return sorted_intents[0][0]
         return "general"
     
     def extract_candidate_number(self, message: str) -> str:
@@ -132,11 +125,8 @@ class ChatService:
                 match = re.search(pattern, user_message, re.IGNORECASE)
                 if match:
                     raw_name = match.group(1).strip()
-                    # Loại bỏ khoảng trắng thừa giữa các từ
                     cleaned_name = ' '.join(raw_name.split())
-                    # Chuẩn hóa chữ hoa đầu mỗi từ
                     cleaned_name = cleaned_name.title()
-                    # Kiểm tra blacklist cho từ đầu tiên
                     if cleaned_name.split()[0].lower() not in blacklist:
                         name = cleaned_name
                     break
@@ -146,28 +136,45 @@ class ChatService:
                 candidate_number = entities.get('candidate_number')
                 if not candidate_number:
                     bot_response = "SBD phải là 8 chữ số. Vui lòng kiểm tra lại!"
-                elif candidate_number and not student_data:
-                    bot_response = f"""🔍 Tôi thấy bạn muốn tra cứu điểm cho SBD **{candidate_number}**.
-
-📋 **Để tra cứu chính xác:**
-1. Sử dụng API: `POST /api/v1/ranking/search`
-2. Cần thêm thông tin khu vực: CN (Đông Nam Bộ), MB (Miền Bắc), MT (Miền Trung), MN (Đồng bằng sông Cửu Long)
-
-💡 **Hoặc bạn có thể:**
-- Truy cập: https://diemthi.tuyensinh247.com
-- Cung cấp SBD + khu vực để tra cứu
-
-Bạn có muốn tôi hướng dẫn cách tra cứu chi tiết không?"""
                 else:
-                    bot_response = await openai_service.generate_context_aware_response(
-                        user_message=user_message,
-                        intent=intent,
-                        chat_history=chat_history,
-                        student_ranking_data=student_data
-                    )
+                    # Parse region từ message, mặc định CN
+                    region = "CN"
+                    for reg in ["CN", "MB", "MT", "MN"]:
+                        if reg.lower() in user_message.lower():
+                            region = reg
+                            break
+                    req = RankingSearchRequest(candidate_number=candidate_number, region=region)
+                    student_obj = await ranking_service.get_student_ranking(req, save_to_db=True)
+                    if not student_obj:
+                        bot_response = f"Không tìm thấy thông tin cho SBD {candidate_number} hoặc số báo danh không tồn tại."
+                    else:
+                        # Phân tích user hỏi điểm, ranking, hay cả hai
+                        ask_score = any(k in user_message.lower() for k in ["điểm", "score"])
+                        ask_rank = any(k in user_message.lower() for k in ["ranking", "xếp hạng", "rank"])
+                        msg_parts = []
+                        if ask_score or not (ask_score or ask_rank):
+                            mark_info = getattr(student_obj, "mark_info", [])
+                            if mark_info:
+                                msg_parts.append("**Kết quả điểm các môn:**")
+                                for m in mark_info:
+                                    msg_parts.append(f"- {m.name}: {m.score}")
+                        if ask_rank or not (ask_score or ask_rank):
+                            blocks = getattr(student_obj, "blocks", [])
+                            if blocks:
+                                msg_parts.append("\n**Xếp hạng theo khối:**")
+                                for block in blocks:
+                                    label = getattr(block, "label", "")
+                                    point = getattr(block, "point", "")
+                                    ranking = getattr(block, "ranking", None)
+                                    rank_str = f"- {label}: {point} điểm"
+                                    if ranking:
+                                        higher = getattr(ranking, "higher", 0)
+                                        total = getattr(ranking, "total", 1)
+                                        rank_str += f" | Xếp hạng: top {round((1-(higher/total))*100,2)}% ({higher}/{total})"
+                                    msg_parts.append(rank_str)
+                        bot_response = "\n".join(msg_parts) if msg_parts else "Không có dữ liệu điểm hoặc ranking cho SBD này."
             else:
                 # Các intent khác → dùng OpenAI với knowledge base
-                # Nếu là intent general và có tên, tạo context đặc biệt
                 if intent == "general" and name:
                     user_context = f"""
 👤 USER SHARING PERSONAL INFO:
@@ -182,7 +189,6 @@ Bạn có muốn tôi hướng dẫn cách tra cứu chi tiết không?"""
                         student_data=None
                     )
                 else:
-                    # intent == general hoặc các intent khác đều để GPT tự ứng biến, chỉ fallback khi OpenAI thực sự lỗi
                     bot_response = await openai_service.generate_context_aware_response(
                         user_message=user_message,
                         intent=intent,

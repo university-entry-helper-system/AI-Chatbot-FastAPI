@@ -50,7 +50,7 @@ uvicorn app.main:app --reload
 ## Tùy chỉnh & mở rộng
 
 - **Prompt hệ thống:** chỉnh sửa file `app/data/system_prompt.txt` để thay đổi phong cách, nhiệm vụ bot.
-- **Từ khóa intent:** sửa file `app/data/keyword_categories.json` để thêm/bớt từ khóa nhận diện ý định.
+- **Từ khóa intent:** chỉnh sửa trực tiếp các trường `keywords` trong file `app/data/knowledge_base.json` để thêm/bớt từ khóa nhận diện ý định.
 - **Knowledge base:** cập nhật file `app/data/knowledge_base.json` để bổ sung kiến thức tư vấn.
 - **Giới hạn context:** thay đổi `CHAT_HISTORY_LIMIT` trong `.env` để kiểm soát số tin nhắn nhớ trong hội thoại.
 

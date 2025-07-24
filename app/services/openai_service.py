@@ -123,96 +123,128 @@ Hãy phản hồi thân thiện, ghi nhớ thông tin và chuyển hướng về
         intent: str,
         student_data: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Enhanced knowledge prompt với structured information"""
         prompt_parts = ["=== KNOWLEDGE BASE CONTEXT ==="]
-        # 1. Intent-specific information
-        intent_data = knowledge_context.get('intent_data', {})
-        if intent_data:
-            prompt_parts.append(f"\n🎯 CONTEXT: {intent_data.get('description', '')}")
-            # Add services nếu có
-            if 'services' in intent_data:
-                prompt_parts.append("\n📋 AVAILABLE SERVICES:")
-                for service in intent_data['services'][:3]:
-                    title = service.get('title', '')
-                    desc = service.get('description', '')
-                    prompt_parts.append(f"• {title}: {desc}")
-        # 2. Specific information based on intent
+        prompt_parts.append(self._build_intent_context(knowledge_context.get('intent_data', {})))
         relevant_info = knowledge_context.get('relevant_info', {})
-        if intent == "major_advice" and 'major' in relevant_info:
-            major = relevant_info['major']
-            prompt_parts.append(f"\n🎓 MAJOR DETAILS:")
-            prompt_parts.append(f"• Tên ngành: {major.get('name', 'N/A')}")
-            prompt_parts.append(f"• Triển vọng: {major.get('prospects', 'N/A')}")
-            prompt_parts.append(f"• Mức lương: {major.get('salary_range', 'N/A')}")
-            if major.get('top_schools'):
-                schools = ', '.join(major['top_schools'][:4])
-                prompt_parts.append(f"• Trường đào tạo tốt: {schools}")
-            if major.get('job_types'):
-                jobs = ', '.join(major['job_types'][:4])
-                prompt_parts.append(f"• Vị trí việc làm: {jobs}")
-        elif intent == "school_recommendation" and 'school' in relevant_info:
-            school = relevant_info['school']
-            prompt_parts.append(f"\n🏫 SCHOOL DETAILS:")
-            prompt_parts.append(f"• Tên trường: {school.get('name', 'N/A')}")
-            prompt_parts.append(f"• Loại hình: {school.get('type', 'N/A')}")
-            prompt_parts.append(f"• Học phí: {school.get('tuition_fee', 'N/A')}")
-            prompt_parts.append(f"• Điểm chuẩn 2024: {school.get('admission_score_2024', 'N/A')}")
-            if school.get('strong_majors'):
-                majors = ', '.join(school['strong_majors'][:4])
-                prompt_parts.append(f"• Ngành mạnh: {majors}")
+        if intent == "major_advice":
+            prompt_parts.append(self._build_major_details(relevant_info))
+        elif intent == "school_recommendation":
+            prompt_parts.append(self._build_school_details(relevant_info))
         elif intent == "admission_score":
-            score_ranges = knowledge_context.get('intent_data', {}).get('score_ranges', {})
-            if score_ranges:
-                prompt_parts.append(f"\n📊 SCORE ANALYSIS FRAMEWORK:")
-                for level, info in score_ranges.items():
-                    range_info = info.get('range', '')
-                    schools = ', '.join(info.get('suitable_schools', [])[:3])
-                    prompt_parts.append(f"• {level.title()}: {range_info} → {schools}")
-        # 3. Student-specific analysis
-        if student_data and intent == "score_lookup":
-            prompt_parts.append(f"\n👤 STUDENT ANALYSIS:")
-            if isinstance(student_data, dict) and 'blocks' in student_data and student_data['blocks']:
-                blocks = student_data['blocks']
-                best_block = max(blocks, key=lambda x: x.get('point', 0))
-                prompt_parts.append(f"• Khối tốt nhất: {best_block.get('label', '')} - {best_block.get('point', 0)} điểm")
-                # Determine score level
-                max_score = best_block.get('point', 0)
-                if max_score >= 27:
-                    level = "excellent"
-                elif max_score >= 24:
-                    level = "good"
-                elif max_score >= 21:
-                    level = "average_good"
-                else:
-                    level = "average"
-                prompt_parts.append(f"• Mức độ: {level}")
-                # Add ranking info
-                ranking = best_block.get('ranking', {})
-                if ranking:
-                    higher = ranking.get('higher', 0)
-                    total = ranking.get('total', 0)
-                    percentile = (total - higher) / total * 100 if total > 0 else 0
-                    prompt_parts.append(f"• Top {percentile:.1f}% trong khu vực")
-        # 4. Timeline information
-        if 'timeline' in relevant_info:
-            timeline = relevant_info['timeline']
-            if timeline.get('important_deadlines'):
-                prompt_parts.append(f"\n⏰ IMPORTANT DATES:")
-                for deadline in timeline['important_deadlines'][:3]:
-                    prompt_parts.append(f"• {deadline}")
-        # 5. Relevant FAQs
-        if 'faqs' in relevant_info and relevant_info['faqs']:
-            prompt_parts.append(f"\n❓ RELATED Q&A:")
-            for faq in relevant_info['faqs'][:2]:
-                prompt_parts.append(f"• Q: {faq['question']}")
-                prompt_parts.append(f"  A: {faq['answer']}")
-        # 6. Instructions
-        prompt_parts.append(f"\n=== INSTRUCTIONS ===")
-        prompt_parts.append("✅ Use ONLY the information provided above")
-        prompt_parts.append("✅ Be specific and cite relevant data points")
-        prompt_parts.append("✅ If asked about information not in context, acknowledge limitation")
-        prompt_parts.append("✅ Maintain conversational and helpful tone")
-        return "\n".join(prompt_parts)
+            prompt_parts.append(self._build_admission_score_context(knowledge_context.get('intent_data', {})))
+        if intent == "score_lookup":
+            prompt_parts.append(self._build_student_analysis(student_data, intent))
+        prompt_parts.append(self._build_timeline_info(relevant_info))
+        prompt_parts.append(self._build_faqs(relevant_info))
+        prompt_parts.append(self._build_instructions())
+        return "\n".join([p for p in prompt_parts if p])
+
+    def _build_intent_context(self, intent_data):
+        if not intent_data:
+            return ""
+        parts = [f"\n🎯 CONTEXT: {intent_data.get('description', '')}"]
+        if 'services' in intent_data:
+            parts.append("\n📋 AVAILABLE SERVICES:")
+            for service in intent_data['services'][:3]:
+                title = service.get('title', '')
+                desc = service.get('description', '')
+                parts.append(f"• {title}: {desc}")
+        return "\n".join(parts)
+
+    def _build_major_details(self, relevant_info):
+        major = relevant_info.get('major')
+        if not major:
+            return ""
+        parts = ["\n🎓 MAJOR DETAILS:"]
+        parts.append(f"• Tên ngành: {major.get('name', 'N/A')}")
+        parts.append(f"• Triển vọng: {major.get('prospects', 'N/A')}")
+        parts.append(f"• Mức lương: {major.get('salary_range', 'N/A')}")
+        if major.get('top_schools'):
+            schools = ', '.join(major['top_schools'][:4])
+            parts.append(f"• Trường đào tạo tốt: {schools}")
+        if major.get('job_types'):
+            jobs = ', '.join(major['job_types'][:4])
+            parts.append(f"• Vị trí việc làm: {jobs}")
+        return "\n".join(parts)
+
+    def _build_school_details(self, relevant_info):
+        school = relevant_info.get('school')
+        if not school:
+            return ""
+        parts = ["\n🏫 SCHOOL DETAILS:"]
+        parts.append(f"• Tên trường: {school.get('name', 'N/A')}")
+        parts.append(f"• Loại hình: {school.get('type', 'N/A')}")
+        parts.append(f"• Học phí: {school.get('tuition_fee', 'N/A')}")
+        parts.append(f"• Điểm chuẩn 2024: {school.get('admission_score_2024', 'N/A')}")
+        if school.get('strong_majors'):
+            majors = ', '.join(school['strong_majors'][:4])
+            parts.append(f"• Ngành mạnh: {majors}")
+        return "\n".join(parts)
+
+    def _build_admission_score_context(self, intent_data):
+        score_ranges = intent_data.get('score_ranges', {})
+        if not score_ranges:
+            return ""
+        parts = ["\n📊 SCORE ANALYSIS FRAMEWORK:"]
+        for level, info in score_ranges.items():
+            range_info = info.get('range', '')
+            schools = ', '.join(info.get('suitable_schools', [])[:3])
+            parts.append(f"• {level.title()}: {range_info} → {schools}")
+        return "\n".join(parts)
+
+    def _build_student_analysis(self, student_data, intent):
+        if not (student_data and intent == "score_lookup"):
+            return ""
+        parts = ["\n👤 STUDENT ANALYSIS:"]
+        if isinstance(student_data, dict) and 'blocks' in student_data and student_data['blocks']:
+            blocks = student_data['blocks']
+            best_block = max(blocks, key=lambda x: x.get('point', 0))
+            parts.append(f"• Khối tốt nhất: {best_block.get('label', '')} - {best_block.get('point', 0)} điểm")
+            max_score = best_block.get('point', 0)
+            if max_score >= 27:
+                level = "excellent"
+            elif max_score >= 24:
+                level = "good"
+            elif max_score >= 21:
+                level = "average_good"
+            else:
+                level = "average"
+            parts.append(f"• Mức độ: {level}")
+            ranking = best_block.get('ranking', {})
+            if ranking:
+                higher = ranking.get('higher', 0)
+                total = ranking.get('total', 0)
+                percentile = (total - higher) / total * 100 if total > 0 else 0
+                parts.append(f"• Top {percentile:.1f}% trong khu vực")
+        else:
+            parts.append("• No valid student data available")
+        return "\n".join(parts)
+
+    def _build_timeline_info(self, relevant_info):
+        timeline = relevant_info.get('timeline')
+        if not timeline or not timeline.get('important_deadlines'):
+            return ""
+        parts = ["\n⏰ IMPORTANT DATES:"]
+        for deadline in timeline['important_deadlines'][:3]:
+            parts.append(f"• {deadline}")
+        return "\n".join(parts)
+
+    def _build_faqs(self, relevant_info):
+        faqs = relevant_info.get('faqs')
+        if not faqs:
+            return ""
+        parts = ["\n❓ RELATED Q&A:"]
+        for faq in faqs[:2]:
+            parts.append(f"• Q: {faq['question']}")
+            parts.append(f"  A: {faq['answer']}")
+        return "\n".join(parts)
+
+    def _build_instructions(self):
+        return ("\n=== INSTRUCTIONS ===\n"
+                "✅ Use ONLY the information provided above\n"
+                "✅ Be specific and cite relevant data points\n"
+                "✅ If asked about information not in context, acknowledge limitation\n"
+                "✅ Maintain conversational and helpful tone")
 
     def _get_fallback_response(self, intent: str, user_message: str) -> str:
         """Fallback response khi OpenAI API fail"""
@@ -224,7 +256,7 @@ Hãy phản hồi thân thiện, ghi nhớ thông tin và chuyển hướng về
 - Số báo danh (8 chữ số)
 - Khu vực thi (CN, MB, MT, MN)
 
-Hoặc bạn có thể sử dụng API: POST /api/v1/ranking/search""",
+Hoặc bạn có thể sử dụng API: POST /api/v1/ranking/thptqg/2025/search""",
             
             "school_recommendation": """Tôi sẽ giúp bạn tư vấn chọn trường phù hợp!
 

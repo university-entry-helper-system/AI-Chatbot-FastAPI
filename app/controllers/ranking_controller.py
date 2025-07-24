@@ -43,9 +43,9 @@ class StudentRankingResponse(BaseModel):
     blocks: List[BlockRanking]
 
 # Simple API endpoint for testing
-@router.post("/search")
+@router.post("/thptqg/2025/search")
 async def search_student_ranking(request: RankingSearchRequest):
-    """Tra cứu ranking theo SBD - API call to tuyensinh247.com"""
+    """Tra cứu ranking theo SBD - API call to tuyensinh247.com - THPTQG 2025"""
 
     try:
         # API call to tuyensinh247.com

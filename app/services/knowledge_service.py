@@ -9,6 +9,14 @@ class KnowledgeService:
     def __init__(self):
         self.knowledge_base = None
         self.load_knowledge_base()
+        # Build intent_keywords mapping from all keys in knowledge_base.json that có 'keywords'
+        current_dir = Path(__file__).parent.parent
+        kb_path = current_dir / "data" / "knowledge_base.json"
+        with open(kb_path, 'r', encoding='utf-8') as f:
+            self.kb_json = json.load(f)
+        self.intent_keywords = {k: v["keywords"] for k, v in self.kb_json.items() if isinstance(v, dict) and "keywords" in v}
+        self.school_keywords = self.kb_json.get("school_recommendation", {}).get("keywords", [])
+        self.major_keywords = self.kb_json.get("major_advice", {}).get("keywords", [])
 
     def load_knowledge_base(self):
         """Load knowledge base từ file JSON"""
@@ -45,16 +53,13 @@ class KnowledgeService:
         message_lower = message.lower()
         results = []
         
-        for category_key, category_data in self.knowledge_base.items():
-            keywords = category_data.get('keywords', [])
-            
-            # Kiểm tra keywords match
+        for category_key, keywords in self.intent_keywords.items():
             matches = sum(1 for keyword in keywords if keyword in message_lower)
             if matches > 0:
                 results.append({
                     'category': category_key,
                     'relevance_score': matches,
-                    'data': category_data
+                    'data': self.knowledge_base.get(category_key, {})
                 })
         
         # Sắp xếp theo độ relevance và trả về top results
@@ -140,30 +145,18 @@ class KnowledgeService:
     
     def _extract_school_name(self, message: str) -> Optional[str]:
         """Trích xuất tên trường từ tin nhắn"""
-        common_schools = [
-            "bách khoa", "y", "kinh tế", "ngoại thương", "luật", 
-            "sư phạm", "công nghiệp", "nông nghiệp", "thủy lợi"
-        ]
-        
         message_lower = message.lower()
-        for school in common_schools:
+        for school in self.school_keywords:
             if school in message_lower:
                 return school
-        
         return None
     
     def _extract_major_name(self, message: str) -> Optional[str]:
         """Trích xuất tên ngành từ tin nhắn"""
-        common_majors = [
-            "công nghệ thông tin", "y khoa", "kinh tế", "luật", 
-            "cơ khí", "điện tử", "xây dựng", "hóa học", "sinh học"
-        ]
-        
         message_lower = message.lower()
-        for major in common_majors:
+        for major in self.major_keywords:
             if major in message_lower:
                 return major
-        
         return None
     
     def _find_relevant_faqs(self, message: str, limit: int = 2) -> List[Dict[str, str]]:
