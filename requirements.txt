@@ -8,3 +8,8 @@ websockets==12.0
 httpx==0.25.2
 beautifulsoup4==4.12.2
 openai==1.3.7
+pydantic-settings
+pydantic[email]
+pymysql
+aiohttp==3.9.1
+cryptography

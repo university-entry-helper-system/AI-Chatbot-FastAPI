@@ -54,5 +54,35 @@ class ChatService:
     
     def get_chat_history(self, db: Session, session_id: str, limit: int = 20):
         return chat_repository.get_chat_history(db, session_id, limit)
+    
+    async def process_ranking_query(self, db: Session, user_message: str) -> str:
+        """Xử lý câu hỏi về ranking/SBD"""
+        import re
+        sbd_pattern = r'\b\d{8,10}\b'
+        sbd_match = re.search(sbd_pattern, user_message)
+        if sbd_match:
+            sbd = sbd_match.group()
+            region = "CN"  # Can be enhanced
+            try:
+                from app.services.ranking_service import ranking_service
+                from app.schemas.student import RankingSearchRequest
+                request = RankingSearchRequest(candidate_number=sbd, region=region)
+                result = await ranking_service.get_student_ranking(db, request)
+                if result:
+                    response = f"🎯 **Kết quả tra cứu SBD {sbd}:**\n\n"
+                    response += f"📊 **Điểm các môn:**\n"
+                    for mark in result.mark_info:
+                        response += f"• {mark.name}: {mark.score}\n"
+                    response += f"\n🏆 **Xếp hạng theo khối:**\n"
+                    for block in result.blocks:
+                        rank_position = block.ranking.higher + 1
+                        response += f"• {block.label}: {block.point} điểm - Xếp hạng #{rank_position}/{block.ranking.total}\n"
+                    return response
+                else:
+                    return f"❌ Không tìm thấy thông tin cho SBD {sbd}. Vui lòng kiểm tra lại số báo danh."
+            except Exception as e:
+                return f"⚠️ Có lỗi xảy ra khi tra cứu: {str(e)}"
+        return "📋 Để tra cứu điểm thi, vui lòng cung cấp số báo danh (8-10 chữ số)."
+
 
 chat_service = ChatService()

@@ -2,12 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.controllers import user_controller, chat_controller, crawl_controller
+from app.controllers import user_controller, chat_controller, crawl_controller, ranking_controller
 
-# Tạo tables
 Base.metadata.create_all(bind=engine)
 
-# Khởi tạo FastAPI app
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
@@ -17,16 +15,19 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Trong production nên specify cụ thể
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+API_PREFIX = getattr(settings, "api_prefix", "/api/v1")
+
 # Include routers
-app.include_router(user_controller.router, prefix="/api/v1")
-app.include_router(chat_controller.router, prefix="/api/v1")
-app.include_router(crawl_controller.router, prefix="/api/v1")
+app.include_router(user_controller.router, prefix=API_PREFIX)
+app.include_router(chat_controller.router, prefix=API_PREFIX)
+app.include_router(crawl_controller.router, prefix=API_PREFIX)
+app.include_router(ranking_controller.router, prefix=API_PREFIX)
 
 # Health check endpoint
 @app.get("/")
@@ -34,7 +35,14 @@ async def root():
     return {
         "message": "Chatbot Tư vấn Tuyển sinh API",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "endpoints": [
+            "/api/v1/users/",
+            "/api/v1/chat/",
+            "/api/v1/crawl/",
+            "/api/v1/ranking/",
+            "/docs"
+        ]
     }
 
 @app.get("/health")
