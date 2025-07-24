@@ -15,8 +15,10 @@ class ChatService:
             "financial": ["học phí", "chi phí", "học bổng", "vay vốn"]
         }
 
-    async def create_session(self, user_id: str) -> str:
-        return await chat_repository.create_session(user_id)
+    async def create_session(self) -> str:
+        session_id = str(uuid.uuid4())
+        await chat_repository.session_collection.insert_one({"session_id": session_id})
+        return session_id
 
     def detect_intent(self, message: str) -> str:
         message_lower = message.lower()

@@ -1,26 +1,25 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from app.services.chat_service import chat_service
-from app.schemas.user import ChatMessageRequest, ChatMessageResponse
 from app.utils.response import success_response
 import json
+from app.schemas.chat import ChatMessageRequest
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 @router.post("/message")
 async def send_message(message_request: ChatMessageRequest):
     try:
-        result = await chat_service.process_message(
-            message_request.session_id,
-            message_request.user_message
-        )
+        session_id = message_request.session_id
+        user_message = message_request.user_message
+        result = await chat_service.process_message(session_id, user_message)
         return success_response(data=result, message="Message processed successfully")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/session/{user_id}")
-async def create_chat_session(user_id: str):
+@router.post("/session")
+async def create_chat_session():
     try:
-        session_id = await chat_service.create_session(user_id)
+        session_id = await chat_service.create_session()
         return success_response(data={"session_id": session_id}, message="Session created")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
