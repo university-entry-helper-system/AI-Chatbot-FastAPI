@@ -1,11 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import List
-from app.core.database import get_db
 from app.utils.response import success_response, error_response
 from pydantic import BaseModel, Field
 import aiohttp
 import asyncio
+from app.core.mongo import mongo_db
 
 router = APIRouter(prefix="/ranking", tags=["ranking"])
 
@@ -45,10 +44,7 @@ class StudentRankingResponse(BaseModel):
 
 # Simple API endpoint for testing
 @router.post("/search")
-async def search_student_ranking(
-    request: RankingSearchRequest,
-    db: Session = Depends(get_db)
-):
+async def search_student_ranking(request: RankingSearchRequest):
     """Tra cứu ranking theo SBD - API call to tuyensinh247.com"""
 
     try:
@@ -68,9 +64,16 @@ async def search_student_ranking(
                 if response.status == 200:
                     api_result = await response.json()
                     if api_result.get("success") and api_result.get("data"):
-                        # TODO: Save to database here
+                        student_data = api_result["data"]
+                        candidate_number = student_data.get("candidate_number")
+                        collection = mongo_db["student_ranking"]
+                        await collection.update_one(
+                            {"candidate_number": candidate_number},
+                            {"$set": student_data},
+                            upsert=True
+                        )
                         return success_response(
-                            data=api_result["data"],
+                            data=student_data,
                             message="Tra cứu thành công"
                         )
                     else:

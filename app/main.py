@@ -1,10 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.core.database import engine, Base
 from app.controllers import user_controller, chat_controller, crawl_controller, ranking_controller
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.app_name,
@@ -37,10 +34,10 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "endpoints": [
-            "/api/v1/users/",
-            "/api/v1/chat/",
-            "/api/v1/crawl/",
-            "/api/v1/ranking/",
+            f"{API_PREFIX}/users/",
+            f"{API_PREFIX}/chat/",
+            f"{API_PREFIX}/crawl/",
+            f"{API_PREFIX}/ranking/",
             "/docs"
         ]
     }

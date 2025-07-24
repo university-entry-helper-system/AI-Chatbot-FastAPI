@@ -1,7 +1,4 @@
-import httpx
-from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional
-import asyncio
 
 class CrawlService:
     def __init__(self):

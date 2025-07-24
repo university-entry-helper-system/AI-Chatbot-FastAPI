@@ -38,21 +38,12 @@ class SubjectBlock(BaseModel):
     
 class StudentRanking(BaseModel):
     """Xếp hạng thí sinh theo từng khối"""
-    __tablename__ = "student_rankings"
-    
-    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
-    block_id = Column(Integer, ForeignKey("subject_blocks.id"), nullable=False)
-    
-    # Thông tin điểm và ranking
-    total_point = Column(Float, nullable=False)
-    ranking_equal = Column(Integer, nullable=False)      # Số thí sinh có điểm bằng
-    ranking_higher = Column(Integer, nullable=False)     # Số thí sinh có điểm cao hơn
-    ranking_total = Column(Integer, nullable=False)      # Tổng số thí sinh trong khối
-    same_2024 = Column(Float, nullable=True)             # Điểm tương đương năm 2024
-    
-    # Relationship
-    student = relationship("Student", back_populates="rankings")
-    block = relationship("SubjectBlock")
+    __tablename__ = "student_ranking"
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_number = Column(String(8), unique=True, index=True, nullable=False)
+    mark_info = Column(JSON, nullable=True)
+    data_year = Column(Integer, nullable=True)
+    blocks = Column(JSON, nullable=True)
 
 class CrawlLog(BaseModel):
     """Log crawl API calls"""
