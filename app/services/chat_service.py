@@ -109,6 +109,15 @@ class ChatService:
             entities = self.extract_entities(user_message)
             # 2. Lấy lịch sử chat
             chat_history = await chat_repository.get_chat_history(session_id, limit=settings.chat_history_limit)
+            # Build context an toàn
+            context = []
+            for msg in chat_history:
+                if msg.get("user_message"):
+                    context.append({"role": "user", "content": msg["user_message"]})
+                if msg.get("bot_response"):
+                    context.append({"role": "assistant", "content": msg["bot_response"]})
+            # Lọc lại context cho chắc chắn
+            context = [m for m in context if m.get("role") and m.get("content")]
             # 3. Lấy thông tin điểm thi nếu có SBD
             student_data = await self.get_student_data_if_available(user_message)
 
@@ -219,11 +228,14 @@ class ChatService:
                                             rank_str += f" | Xếp hạng: top {round((1-(higher/total))*100,2)}% ({higher}/{total})"
                                         msg_parts.append(rank_str)
                             bot_response = "\n".join(msg_parts) if msg_parts else "Không có dữ liệu điểm hoặc ranking cho SBD này."
-                # Lưu vào history và yield luôn
+                # Lưu vào history và chunk từng phần
                 chat_message = await chat_repository.create_message(
                     session_id, user_message, bot_response, intent
                 )
-                yield bot_response
+                import asyncio
+                await asyncio.sleep(3)  # Delay 3s cho FE hiển thị trạng thái 'đang suy nghĩ'
+                for chunk in self.chunk_text(bot_response):
+                    yield chunk
                 return
             else:
                 # Các intent khác → dùng OpenAI với knowledge base
@@ -236,42 +248,84 @@ class ChatService:
 """
                     # Stream OpenAI
                     full_response = ""
-                    async for chunk in openai_service.stream_response(
-                        user_message=user_message,
-                        intent=intent,
-                        context=chat_history,
-                        student_data=None
-                    ):
-                        full_response += chunk
-                        yield chunk
-                    # Lưu vào history
-                    await chat_repository.create_message(
-                        session_id, user_message, full_response, intent
+                    # Lưu bản ghi tạm vào DB trước khi stream
+                    chat_message = await chat_repository.create_message(
+                        session_id, user_message, "", intent
                     )
+                    message_id = chat_message["_id"]
+                    import asyncio
+                    await asyncio.sleep(3)  # Delay 3s cho FE hiển thị trạng thái 'đang suy nghĩ'
+                    try:
+                        async for chunk in openai_service.stream_response(
+                            user_message=user_message,
+                            intent=intent,
+                            context=context,
+                            student_data=None
+                        ):
+                            full_response += chunk
+                            yield chunk
+                        # Update lại bản ghi với full_response
+                        await chat_repository.update_message_bot_response(
+                            message_id, full_response
+                        )
+                        # Không yield/log object MongoDB ở đây
+                    except Exception as e:
+                        logger.error(f"Error in OpenAI stream: {e}")
+                        fallback_response = self._get_enhanced_fallback("error", user_message)
+                        await chat_repository.update_message_bot_response(
+                            message_id, fallback_response
+                        )
+                        for chunk in self.chunk_text(fallback_response):
+                            yield chunk
                     return
                 else:
                     # Stream OpenAI cho intent khác
                     full_response = ""
-                    async for chunk in openai_service.stream_response(
-                        user_message=user_message,
-                        intent=intent,
-                        context=chat_history,
-                        student_data=student_data
-                    ):
-                        full_response += chunk
-                        yield chunk
-                    # Lưu vào history
-                    await chat_repository.create_message(
-                        session_id, user_message, full_response, intent
+                    # Lưu bản ghi tạm vào DB trước khi stream
+                    chat_message = await chat_repository.create_message(
+                        session_id, user_message, "", intent
                     )
+                    message_id = chat_message["_id"]
+                    import asyncio
+                    await asyncio.sleep(3)  # Delay 3s cho FE hiển thị trạng thái 'đang suy nghĩ'
+                    try:
+                        async for chunk in openai_service.stream_response(
+                            user_message=user_message,
+                            intent=intent,
+                            context=context,
+                            student_data=student_data
+                        ):
+                            full_response += chunk
+                            yield chunk
+                        # Update lại bản ghi với full_response
+                        await chat_repository.update_message_bot_response(
+                            message_id, full_response
+                        )
+                        # Không yield/log object MongoDB ở đây
+                    except Exception as e:
+                        logger.error(f"Error in OpenAI stream: {e}")
+                        fallback_response = self._get_enhanced_fallback("error", user_message)
+                        await chat_repository.update_message_bot_response(
+                            message_id, fallback_response
+                        )
+                        for chunk in self.chunk_text(fallback_response):
+                            yield chunk
                     return
         except Exception as e:
             logger.error(f"Error in process_message_stream: {e}")
             fallback_response = self._get_enhanced_fallback("error", user_message)
-            await chat_repository.create_message(
+            # Lưu fallback vào history
+            chat_message = await chat_repository.create_message(
                 session_id, user_message, fallback_response, "error"
             )
-            yield fallback_response
+            import asyncio
+            await asyncio.sleep(3)
+            for chunk in self.chunk_text(fallback_response):
+                yield chunk
+
+    def chunk_text(self, text, chunk_size=32):
+        for i in range(0, len(text), chunk_size):
+            yield text[i:i+chunk_size]
 
     def _get_enhanced_fallback(self, intent: str, user_message: str) -> str:
         """Enhanced fallback using knowledge base"""

@@ -1,6 +1,7 @@
 from app.core.mongo import mongo_db
 import uuid
 from app.core.config import settings
+from bson import ObjectId
 
 class ChatRepository:
     def __init__(self):
@@ -27,6 +28,17 @@ class ChatRepository:
         if limit is None:
             limit = settings.chat_history_limit
         cursor = self.message_collection.find({"session_id": session_id}).sort("_id", -1).limit(limit)
-        return [doc async for doc in cursor]
+        result = []
+        async for doc in cursor:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            result.append(doc)
+        return result
+
+    async def update_message_bot_response(self, message_id: str, bot_response: str):
+        await self.message_collection.update_one(
+            {"_id": ObjectId(message_id)},
+            {"$set": {"bot_response": bot_response}}
+        )
 
 chat_repository = ChatRepository()
