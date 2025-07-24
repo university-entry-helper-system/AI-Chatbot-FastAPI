@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 import aiohttp
 import asyncio
 from app.core.mongo import mongo_db
+from app.services.ranking_service import ranking_service
 
 router = APIRouter(prefix="/ranking", tags=["ranking"])
 
@@ -46,47 +47,21 @@ class StudentRankingResponse(BaseModel):
 @router.post("/thptqg/2025/search")
 async def search_student_ranking(request: RankingSearchRequest):
     """Tra cứu ranking theo SBD - API call to tuyensinh247.com - THPTQG 2025"""
-
     try:
-        # API call to tuyensinh247.com
-        api_url = "https://diemthi.tuyensinh247.com/api/user/thpt-get-block"
-        payload = {
-            "region": request.region,
-            "userNumber": request.candidate_number
-        }
-        headers = {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://diemthi.tuyensinh247.com/xep-hang-thi-thptqg.html'
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, json=payload, headers=headers) as response:
-                if response.status == 200:
-                    api_result = await response.json()
-                    if api_result.get("success") and api_result.get("data"):
-                        student_data = api_result["data"]
-                        candidate_number = student_data.get("candidate_number")
-                        collection = mongo_db["student_ranking"]
-                        await collection.update_one(
-                            {"candidate_number": candidate_number},
-                            {"$set": student_data},
-                            upsert=True
-                        )
-                        return success_response(
-                            data=student_data,
-                            message="Tra cứu thành công"
-                        )
-                    else:
-                        # Trả về lỗi rõ ràng nếu không tìm thấy SBD
-                        raise HTTPException(
-                            status_code=404,
-                            detail=f"Không tìm thấy thông tin cho SBD {request.candidate_number} hoặc số báo danh không tồn tại."
-                        )
-                else:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"API call failed with status {response.status}"
-                    )
+        # Nếu không truyền region, mặc định là CN
+        if not request.region:
+            request.region = "CN"
+        student_data = await ranking_service.get_student_ranking(request, save_to_db=True)
+        if student_data:
+            return success_response(
+                data=student_data.dict(),
+                message="Tra cứu thành công"
+            )
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Không tìm thấy thông tin cho SBD {request.candidate_number} hoặc số báo danh không tồn tại."
+            )
     except HTTPException as e:
         raise e
     except Exception as e:

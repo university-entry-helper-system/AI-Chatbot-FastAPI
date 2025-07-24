@@ -61,12 +61,10 @@ class RankingService:
         request: RankingSearchRequest,
         save_to_db: bool = True
     ) -> Optional[StudentRankingResponse]:
-        # Check if data exists in MongoDB first
-        existing_student = await ranking_repository.get_by_candidate_number(request.candidate_number)
-        if existing_student:
-            return StudentRankingResponse(**existing_student)
-        # Call API ngoài nếu chưa có
-        api_result = await self._make_api_request(request.candidate_number, request.region)
+        region = request.region or "CN"
+        year = 2025
+        candidate_number = request.candidate_number
+        api_result = await self._make_api_request(candidate_number, region)
         if not api_result["success"]:
             return None
         api_data = api_result["data"]
@@ -75,6 +73,10 @@ class RankingService:
         ranking_data = api_data["data"]
         if save_to_db:
             await ranking_repository.upsert_ranking(ranking_data["candidate_number"], ranking_data)
+        # Gắn region và year vào từng block
+        for block in ranking_data.get("blocks", []):
+            block["region"] = region
+            block["year"] = year
         return StudentRankingResponse(**ranking_data)
 
 ranking_service = RankingService()

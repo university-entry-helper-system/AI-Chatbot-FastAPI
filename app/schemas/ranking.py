@@ -28,6 +28,8 @@ class BlockRanking(BaseModel):
     point: float
     ranking: RankingData
     same2024: float = None
+    region: str  # Khu vực: CN, MB, MT, MN
+    year: int    # Năm dữ liệu, mặc định 2025
 
 class StudentRankingResponse(BaseModel):
     candidate_number: str

@@ -12,6 +12,7 @@ from app.services.knowledge_service import knowledge_service
 from app.core.config import settings
 from app.services.ranking_service import ranking_service
 from app.schemas.ranking import RankingSearchRequest
+import datetime
 
 logger = logging.getLogger("chat_service")
 
@@ -134,45 +135,90 @@ class ChatService:
             # 4. Xử lý đặc biệt cho score_lookup
             if intent == "score_lookup":
                 candidate_number = entities.get('candidate_number')
-                if not candidate_number:
-                    bot_response = "SBD phải là 8 chữ số. Vui lòng kiểm tra lại!"
+                # Parse year từ message, mặc định 2025
+                year = 2025
+                year_match = re.search(r"\b(20\d{2})\b", user_message)
+                if year_match:
+                    year = int(year_match.group(1))
+                current_year = datetime.datetime.now().year
+                # Lấy categories từ knowledge_base.json
+                kb_categories = []
+                try:
+                    kb_categories = knowledge_service.kb_json.get("score_lookup", {}).get("categories", [])
+                except Exception:
+                    kb_categories = []
+                if not kb_categories:
+                    kb_categories = ["thptqg"]
+                category_found = False
+                for cat in kb_categories:
+                    if cat.lower() in user_message.lower():
+                        category_found = True
+                        break
+                # Nếu không có keyword kỳ thi nào, mặc định là THPTQG và year=2025
+                if not category_found and not year_match:
+                    category_found = True
+                    year = 2025
+                if not category_found:
+                    bot_response = (
+                        "Hiện tại hệ thống chỉ hỗ trợ tra cứu điểm thi THPTQG. "
+                        "Các kỳ thi khác (ĐGNL, ...), vui lòng thử lại sau khi có dữ liệu hoặc liên hệ đơn vị tổ chức kỳ thi đó để biết thêm thông tin."
+                    )
+                elif year < 2025:
+                    bot_response = "Hệ thống hiện tại chỉ có data số báo danh của 2025, các năm về trước xin vui lòng thử lại sau."
+                elif year > current_year or year > 2025:
+                    bot_response = (
+                        f"Bạn vừa hỏi tra cứu điểm thi năm {year}. "
+                        "Hiện tại hệ thống EduPath chỉ hỗ trợ dữ liệu điểm thi và xếp hạng cho kỳ thi THPT Quốc gia năm 2025. "
+                        "Các năm sau sẽ được cập nhật khi có dữ liệu chính thức từ Bộ Giáo dục và Đào tạo. "
+                        "Vui lòng quay lại sau khi kỳ thi năm đó kết thúc hoặc liên hệ với nhà trường/đơn vị tổ chức để biết thêm thông tin mới nhất."
+                    )
                 else:
-                    # Parse region từ message, mặc định CN
-                    region = "CN"
-                    for reg in ["CN", "MB", "MT", "MN"]:
-                        if reg.lower() in user_message.lower():
-                            region = reg
-                            break
-                    req = RankingSearchRequest(candidate_number=candidate_number, region=region)
-                    student_obj = await ranking_service.get_student_ranking(req, save_to_db=True)
-                    if not student_obj:
-                        bot_response = f"Không tìm thấy thông tin cho SBD {candidate_number} hoặc số báo danh không tồn tại."
+                    if not candidate_number:
+                        bot_response = (
+                            "Để tra cứu bảng xếp hạng THPT Quốc Gia, bạn vui lòng cung cấp:\n"
+                            "- Số báo danh (8 chữ số)\n"
+                            "- Khu vực thi (CN, MB, MT, MN)\n"
+                            "Ví dụ: 'SBD: 12345678, Khu vực: MB'"
+                        )
                     else:
-                        # Phân tích user hỏi điểm, ranking, hay cả hai
-                        ask_score = any(k in user_message.lower() for k in ["điểm", "score"])
-                        ask_rank = any(k in user_message.lower() for k in ["ranking", "xếp hạng", "rank"])
-                        msg_parts = []
-                        if ask_score or not (ask_score or ask_rank):
-                            mark_info = getattr(student_obj, "mark_info", [])
-                            if mark_info:
-                                msg_parts.append("**Kết quả điểm các môn:**")
-                                for m in mark_info:
-                                    msg_parts.append(f"- {m.name}: {m.score}")
-                        if ask_rank or not (ask_score or ask_rank):
-                            blocks = getattr(student_obj, "blocks", [])
-                            if blocks:
-                                msg_parts.append("\n**Xếp hạng theo khối:**")
-                                for block in blocks:
-                                    label = getattr(block, "label", "")
-                                    point = getattr(block, "point", "")
-                                    ranking = getattr(block, "ranking", None)
-                                    rank_str = f"- {label}: {point} điểm"
-                                    if ranking:
-                                        higher = getattr(ranking, "higher", 0)
-                                        total = getattr(ranking, "total", 1)
-                                        rank_str += f" | Xếp hạng: top {round((1-(higher/total))*100,2)}% ({higher}/{total})"
-                                    msg_parts.append(rank_str)
-                        bot_response = "\n".join(msg_parts) if msg_parts else "Không có dữ liệu điểm hoặc ranking cho SBD này."
+                        # Parse region từ message, mặc định CN
+                        region = "CN"
+                        for reg in ["CN", "MB", "MT", "MN"]:
+                            if reg.lower() in user_message.lower():
+                                region = reg
+                                break
+                        req = RankingSearchRequest(candidate_number=candidate_number, region=region)
+                        student_obj = await ranking_service.get_student_ranking(req, save_to_db=True)
+                        if not student_obj:
+                            bot_response = f"Không tìm thấy thông tin cho SBD {candidate_number} hoặc số báo danh không tồn tại."
+                        else:
+                            # Phân tích user hỏi điểm, ranking, hay cả hai
+                            ask_score = any(k in user_message.lower() for k in ["điểm", "score"])
+                            ask_rank = any(k in user_message.lower() for k in ["ranking", "xếp hạng", "rank"])
+                            msg_parts = []
+                            if ask_score or not (ask_score or ask_rank):
+                                mark_info = getattr(student_obj, "mark_info", [])
+                                if mark_info:
+                                    msg_parts.append("**Kết quả điểm các môn:**")
+                                    for m in mark_info:
+                                        msg_parts.append(f"- {m.name}: {m.score}")
+                            if ask_rank or not (ask_score or ask_rank):
+                                blocks = getattr(student_obj, "blocks", [])
+                                if blocks:
+                                    msg_parts.append("\n**Xếp hạng theo khối và khu vực:**")
+                                    for block in blocks:
+                                        label = getattr(block, "label", block.get("label", ""))
+                                        point = getattr(block, "point", block.get("point", ""))
+                                        region = getattr(block, "region", block.get("region", ""))
+                                        year = getattr(block, "year", block.get("year", 2025))
+                                        ranking = getattr(block, "ranking", block.get("ranking", None))
+                                        rank_str = f"- {label} ({region}, {year}): {point} điểm"
+                                        if ranking:
+                                            higher = getattr(ranking, "higher", ranking.get("higher", 0))
+                                            total = getattr(ranking, "total", ranking.get("total", 1))
+                                            rank_str += f" | Xếp hạng: top {round((1-(higher/total))*100,2)}% ({higher}/{total})"
+                                        msg_parts.append(rank_str)
+                            bot_response = "\n".join(msg_parts) if msg_parts else "Không có dữ liệu điểm hoặc ranking cho SBD này."
             else:
                 # Các intent khác → dùng OpenAI với knowledge base
                 if intent == "general" and name:
